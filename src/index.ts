@@ -7,36 +7,6 @@ import { execSync } from 'child_process';
 import { EventEmitter } from 'events';
 import TypedEmitter from 'typed-emitter';
 
-let setDevAppAsDefaultProtocolClient: (electronBundlePath: string, protocol: string) => void = () => {};
-
-if (process.platform === `darwin`) {
-
-  if (process.arch === `x64`) {
-
-    setDevAppAsDefaultProtocolClient = require(`../prebuilds/darwin-x64/node.napi.uv1.node`).setDevAppAsDefaultProtocolClient;
-
-  } else if (process.arch === `arm64`) {
-
-    setDevAppAsDefaultProtocolClient = require(`../prebuilds/darwin-arm64/node.napi.uv1.armv8.node`).setDevAppAsDefaultProtocolClient;
-  }
-}
-
-let electronAppUniversalProtocolClientStartupRequestUrl: string | undefined;
-
-if (os.platform() === `darwin`) {
-
-  electron.app.once(
-    `open-url`,
-    (
-      _event,
-      url,
-    ) => {
-
-      electronAppUniversalProtocolClientStartupRequestUrl = url;
-    },
-  );
-}
-
 type ElectronAppUniversalProtocolClientEvents = {
   request: (requestUrl: string) => void;
 }
@@ -61,190 +31,68 @@ class ElectronAppUniversalProtocolClient extends (EventEmitter as new () => Type
     }
 
     await electron.app.whenReady();
+    if (mode === `development`) {
 
-    if (os.platform() === `darwin`) {
+      const electronAppMainScriptPath = path.resolve(process.argv[1]);
 
-      if (mode === `development`) {
+      if (os.platform() === `linux`) {
 
-        const electronBundlePath = path.resolve(
-          process.execPath,
-          `..`,
-          `..`,
-          `..`,
-        );
+        // HACK: As `electron.app.setAsDefaultProtocolClient` is based on `xdg-settings set default-url-scheme-handler` which is not supported on Xfce, we manually create new .desktop entry and use `xdg-mime` to make it default handler for protocol URLs.
 
-        const electronBundleInfoPlistFilePath = path.resolve(
-          electronBundlePath,
-          `Contents`,
-          `Info.plist`,
-        );
+        try {
 
-        const electronBundleInfoPlistOriginalFilePath = path.resolve(
-          electronBundlePath,
-          `Contents`,
-          `Info.plist.original`,
-        );
+          const electronAppDesktopFileName = `electron-app-universal-protocol-client-${crypto.createHash(`md5`).update(`${process.execPath}${electronAppMainScriptPath}`).digest(`hex`)}.desktop`;
 
-        let electronBundleInfoPlistContents: string;
-
-        if (fs.existsSync(electronBundleInfoPlistOriginalFilePath)) {
-
-          electronBundleInfoPlistContents = fs.readFileSync(
-            electronBundleInfoPlistOriginalFilePath,
-            `utf8`,
+          const electronAppDesktopFilePath = path.resolve(
+            electron.app.getPath(`home`),
+            `.local`,
+            `share`,
+            `applications`,
+            electronAppDesktopFileName,
           );
 
-        } else {
-
-          electronBundleInfoPlistContents = fs.readFileSync(
-            electronBundleInfoPlistFilePath,
-            `utf8`,
+          fs.mkdirSync(
+            path.dirname(electronAppDesktopFilePath),
+            {
+              recursive: true,
+            },
           );
 
           fs.writeFileSync(
-            electronBundleInfoPlistOriginalFilePath,
-            electronBundleInfoPlistContents,
+            electronAppDesktopFilePath,
+            [
+              `[Desktop Entry]`,
+              `Name=Electron (pid: ${process.pid})`,
+              `Exec=${process.execPath} ${electronAppMainScriptPath} %u`,
+              `Type=Application`,
+              `Terminal=false`,
+              `MimeType=x-scheme-handler/${protocol};`
+            ].join(`\n`),
           );
-        }
 
-        electronBundleInfoPlistContents = electronBundleInfoPlistContents.replace(
-          `com.github.Electron`,
-          `com.github.${protocol}`,
-        );
+          execSync(`xdg-mime default ${electronAppDesktopFileName} x-scheme-handler/${protocol}`);
 
-        electronBundleInfoPlistContents = electronBundleInfoPlistContents.replace(
-          /<\/dict>\n<\/plist>/,
-          [
-            `    <key>CFBundleURLTypes</key>`,
-            `    <array>`,
-            `      <dict>`,
-            `        <key>CFBundleURLName</key>`,
-            `        <string>${protocol}</string>`,
-            `        <key>CFBundleURLSchemes</key>`,
-            `        <array>`,
-            `          <string>${protocol}</string>`,
-            `        </array>`,
-            `      </dict>`,
-            `    </array>`,
-            `  </dict>`,
-            `</plist>`,
-          ].join(`\n`),
-        );
+        } catch {
 
-        fs.writeFileSync(
-          electronBundleInfoPlistFilePath,
-          electronBundleInfoPlistContents,
-        );
-
-        setDevAppAsDefaultProtocolClient(
-          electronBundlePath,
-          protocol,
-        );
-      }
-
-      if (electronAppUniversalProtocolClientStartupRequestUrl !== undefined) {
-
-        if (electronAppUniversalProtocolClientStartupRequestUrl.startsWith(protocol)) {
-
-          this.emit(`request`, electronAppUniversalProtocolClientStartupRequestUrl);
+          // ignore
         }
       }
 
-      electron.app.setAsDefaultProtocolClient(protocol);
-
-      electron.app.on(
-        `open-url`,
-        (
-          _event,
-          url,
-        ) => {
-
-          if (url.startsWith(protocol)) {
-
-            this.emit(`request`, url);
-          }
-        },
-      );
-
-      electron.app.on(
-        `open-file`,
-        (
-          _event,
-          url,
-        ) => {
-
-          if (url.startsWith(protocol)) {
-
-            this.emit(`request`, url);
-          }
-        },
+      electron.app.setAsDefaultProtocolClient(
+        protocol,
+        process.execPath,
+        [
+          electronAppMainScriptPath,
+        ],
       );
 
     } else {
 
-      if (mode === `development`) {
-
-        const electronAppMainScriptPath = path.resolve(process.argv[1]);
-
-        if (os.platform() === `linux`) {
-
-          // HACK: As `electron.app.setAsDefaultProtocolClient` is based on `xdg-settings set default-url-scheme-handler` which is not supported on Xfce, we manually create new .desktop entry and use `xdg-mime` to make it default handler for protocol URLs.
-
-          try {
-
-            const electronAppDesktopFileName = `electron-app-universal-protocol-client-${crypto.createHash(`md5`).update(`${process.execPath}${electronAppMainScriptPath}`).digest(`hex`)}.desktop`;
-
-            const electronAppDesktopFilePath = path.resolve(
-              electron.app.getPath(`home`),
-              `.local`,
-              `share`,
-              `applications`,
-              electronAppDesktopFileName,
-            );
-
-            fs.mkdirSync(
-              path.dirname(electronAppDesktopFilePath),
-              {
-                recursive: true,
-              },
-            );
-
-            fs.writeFileSync(
-              electronAppDesktopFilePath,
-              [
-                `[Desktop Entry]`,
-                `Name=Electron (pid: ${process.pid})`,
-                `Exec=${process.execPath} ${electronAppMainScriptPath} %u`,
-                `Type=Application`,
-                `Terminal=false`,
-                `MimeType=x-scheme-handler/${protocol};`
-              ].join(`\n`),
-            );
-
-            execSync(`xdg-mime default ${electronAppDesktopFileName} x-scheme-handler/${protocol}`);
-
-          } catch {
-
-            // ignore
-          }
-        }
-
-        electron.app.setAsDefaultProtocolClient(
-          protocol,
-          process.execPath,
-          [
-            electronAppMainScriptPath,
-          ],
-        );
-
-      } else {
-
-        electron.app.setAsDefaultProtocolClient(
-          protocol,
-          process.execPath,
-          [],
-        );
-      }
+      electron.app.setAsDefaultProtocolClient(
+        protocol,
+        process.execPath,
+        [],
+      );
     }
 
     electron.app.on(

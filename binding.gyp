@@ -23,19 +23,6 @@
           },
         ],
         [
-          'OS=="mac"',
-          {
-            "sources": [
-              "./src/lib-macos.mm"
-            ],
-            "xcode_settings": {
-              "OTHER_CPLUSPLUSFLAGS": ["-std=c++14", "-stdlib=libc++"],
-              "OTHER_LDFLAGS": ["-framework CoreFoundation"],
-              "MACOSX_DEPLOYMENT_TARGET": "10.10",
-            },
-          },
-        ],
-        [
           'OS=="linux"',
           {
             "sources": [
